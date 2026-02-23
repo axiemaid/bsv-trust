@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "errors": [],
+  "scryptfile": "bond.scrypt",
+  "sourceMapFile": "bond.scrypt.map",
+  "ctxMethods": [
+    "release",
+    "slash"
+  ]
+}

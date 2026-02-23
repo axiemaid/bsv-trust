@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/contracts/bond.ts"
+  ],
+  "compilerOptions": {
+    "noEmit": true,
+    "experimentalDecorators": true,
+    "target": "ESNext",
+    "esModuleInterop": true
+  }
+}

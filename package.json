@@ -1,0 +1,26 @@
+{
+  "name": "bsv-trust",
+  "version": "0.1.0",
+  "description": "Trust layer on BSV — bonds, attestations, disputes, judges. No authority, no platform. Trust backed by locked sats.",
+  "scripts": {
+    "compile": "npx scrypt-cli compile -i src/contracts/bond.ts"
+  },
+  "keywords": [
+    "bsv",
+    "trust",
+    "bond",
+    "covenant",
+    "scrypt"
+  ],
+  "author": "axiemaid",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "scrypt-cli": "^0.2.3",
+    "scrypt-ts": "^1.4.5",
+    "scrypt-ts-transpiler": "^1.2.29",
+    "ts-node": "^10.9.2",
+    "ts-patch": "^3.3.0",
+    "typescript": "5.3.3"
+  }
+}
