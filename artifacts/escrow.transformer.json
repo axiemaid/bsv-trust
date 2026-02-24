@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "errors": [],
+  "scryptfile": "escrow.scrypt",
+  "sourceMapFile": "escrow.scrypt.map",
+  "ctxMethods": [
+    "approve",
+    "refund",
+    "timeout"
+  ]
+}

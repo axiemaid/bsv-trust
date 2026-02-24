@@ -1,0 +1,49 @@
+
+contract Escrow {
+  PubKey requesterPub;
+  Ripemd160 requesterPkh;
+  PubKey workerPub;
+  Ripemd160 workerPkh;
+  int timeoutBlock;
+  bytes __scrypt_ts_ctx_hashoutputs;
+  int __scrypt_ts_ctx_locktime;
+  int __scrypt_ts_ctx_value;
+  constructor(PubKey requesterPub, Ripemd160 requesterPkh, PubKey workerPub, Ripemd160 workerPkh, int timeoutBlock) {
+    this.requesterPub = requesterPub;
+    this.requesterPkh = requesterPkh;
+    this.workerPub = workerPub;
+    this.workerPkh = workerPkh;
+    this.timeoutBlock = timeoutBlock;
+  }
+  public function approve(Sig sig, int amount, SigHashPreimage __scrypt_ts_txPreimage) {
+    require(Tx.checkPreimageSigHashType(__scrypt_ts_txPreimage, SigHashType(b'41')));
+    this.__scrypt_ts_ctx_hashoutputs = SigHash.hashOutputs(__scrypt_ts_txPreimage);
+    this.__scrypt_ts_ctx_locktime = SigHash.nLocktime(__scrypt_ts_txPreimage);
+    this.__scrypt_ts_ctx_value = SigHash.value(__scrypt_ts_txPreimage);
+    require(checkSig(sig, this.requesterPub));
+    require(amount > 0 && amount <= this.__scrypt_ts_ctx_value);
+    bytes outputs = Utils.buildOutput(Utils.buildPublicKeyHashScript(this.workerPkh), amount);
+    require(this.__scrypt_ts_ctx_hashoutputs == hash256(outputs));
+  }
+  public function refund(Sig sig, int amount, SigHashPreimage __scrypt_ts_txPreimage) {
+    require(Tx.checkPreimageSigHashType(__scrypt_ts_txPreimage, SigHashType(b'41')));
+    this.__scrypt_ts_ctx_hashoutputs = SigHash.hashOutputs(__scrypt_ts_txPreimage);
+    this.__scrypt_ts_ctx_locktime = SigHash.nLocktime(__scrypt_ts_txPreimage);
+    this.__scrypt_ts_ctx_value = SigHash.value(__scrypt_ts_txPreimage);
+    require(checkSig(sig, this.workerPub));
+    require(amount > 0 && amount <= this.__scrypt_ts_ctx_value);
+    bytes outputs = Utils.buildOutput(Utils.buildPublicKeyHashScript(this.requesterPkh), amount);
+    require(this.__scrypt_ts_ctx_hashoutputs == hash256(outputs));
+  }
+  public function timeout(Sig sig, int amount, SigHashPreimage __scrypt_ts_txPreimage) {
+    require(Tx.checkPreimageSigHashType(__scrypt_ts_txPreimage, SigHashType(b'41')));
+    this.__scrypt_ts_ctx_hashoutputs = SigHash.hashOutputs(__scrypt_ts_txPreimage);
+    this.__scrypt_ts_ctx_locktime = SigHash.nLocktime(__scrypt_ts_txPreimage);
+    this.__scrypt_ts_ctx_value = SigHash.value(__scrypt_ts_txPreimage);
+    require(checkSig(sig, this.requesterPub));
+    require(this.__scrypt_ts_ctx_locktime >= this.timeoutBlock);
+    require(amount > 0 && amount <= this.__scrypt_ts_ctx_value);
+    bytes outputs = Utils.buildOutput(Utils.buildPublicKeyHashScript(this.requesterPkh), amount);
+    require(this.__scrypt_ts_ctx_hashoutputs == hash256(outputs));
+  }
+}

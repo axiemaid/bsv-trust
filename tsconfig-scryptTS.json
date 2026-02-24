@@ -1,7 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "include": [
-    "src/contracts/bond.ts"
+    "src/contracts/escrow.ts"
   ],
   "compilerOptions": {
     "noEmit": true,

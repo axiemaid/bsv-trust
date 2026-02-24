@@ -12,34 +12,19 @@ import {
     Utils,
 } from 'scrypt-ts'
 
-/**
- * Bond — Trust Primitive #1
- *
- * A covenant UTXO that locks sats to a bondholder address with:
- * - Time-locked release (cannot withdraw before lockUntil block height)
- * - Slashing by a designated authority (sats go to slash destination)
- *
- * On-chain anyone can verify: who bonded, how much, when it unlocks,
- * and who can slash it.
- */
 export class Bond extends SmartContract {
-    // Bond owner — can release after time lock
     @prop()
     bondholderPkh: PubKeyHash
 
-    // Public key of the bondholder (for sig verification)
     @prop()
     bondholderPub: PubKey
 
-    // Block height after which the bondholder can release
     @prop()
     lockUntil: bigint
 
-    // Authority that can slash (e.g. a judge or dispute resolver)
     @prop()
     slasherPub: PubKey
 
-    // Where slashed sats go
     @prop()
     slashDestPkh: PubKeyHash
 
@@ -59,33 +44,23 @@ export class Bond extends SmartContract {
     }
 
     @method()
-    public release(sig: Sig) {
-        // Only bondholder can release
+    public release(sig: Sig, amount: bigint) {
         assert(this.checkSig(sig, this.bondholderPub), 'invalid bondholder signature')
-
-        // Enforce time lock — tx nLockTime must be >= lockUntil
         assert(this.ctx.locktime >= this.lockUntil, 'bond still locked')
+        assert(amount > 0n && amount <= this.ctx.utxo.value, 'invalid amount')
 
-        // Pay back to bondholder
         const outputs: ByteString =
-            Utils.buildPublicKeyHashOutput(this.bondholderPkh, this.ctx.utxo.value) +
-            this.buildChangeOutput()
-
+            Utils.buildPublicKeyHashOutput(this.bondholderPkh, amount)
         assert(this.ctx.hashOutputs == hash256(outputs), 'hashOutputs mismatch')
     }
 
     @method()
-    public slash(sig: Sig) {
-        // Only the designated slasher can slash
+    public slash(sig: Sig, amount: bigint) {
         assert(this.checkSig(sig, this.slasherPub), 'invalid slasher signature')
+        assert(amount > 0n && amount <= this.ctx.utxo.value, 'invalid amount')
 
-        // No time lock on slashing — can happen any time
-
-        // Send sats to slash destination
         const outputs: ByteString =
-            Utils.buildPublicKeyHashOutput(this.slashDestPkh, this.ctx.utxo.value) +
-            this.buildChangeOutput()
-
+            Utils.buildPublicKeyHashOutput(this.slashDestPkh, amount)
         assert(this.ctx.hashOutputs == hash256(outputs), 'hashOutputs mismatch')
     }
 }

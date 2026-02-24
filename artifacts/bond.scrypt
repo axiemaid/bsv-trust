@@ -1,4 +1,3 @@
-struct __scrypt_ts_Change {  int amount;  Ripemd160 address;}
 
 contract Bond {
   Ripemd160 bondholderPkh;
@@ -9,7 +8,6 @@ contract Bond {
   bytes __scrypt_ts_ctx_hashoutputs;
   int __scrypt_ts_ctx_locktime;
   int __scrypt_ts_ctx_value;
-  __scrypt_ts_Change __scrypt_ts_change;
   constructor(Ripemd160 bondholderPkh, PubKey bondholderPub, int lockUntil, PubKey slasherPub, Ripemd160 slashDestPkh) {
     this.bondholderPkh = bondholderPkh;
     this.bondholderPub = bondholderPub;
@@ -17,26 +15,25 @@ contract Bond {
     this.slasherPub = slasherPub;
     this.slashDestPkh = slashDestPkh;
   }
-  public function release(Sig sig, SigHashPreimage __scrypt_ts_txPreimage, int __scrypt_ts_changeAmount, Ripemd160 __scrypt_ts_changeAddress) {
+  public function release(Sig sig, int amount, SigHashPreimage __scrypt_ts_txPreimage) {
     require(Tx.checkPreimageSigHashType(__scrypt_ts_txPreimage, SigHashType(b'41')));
     this.__scrypt_ts_ctx_hashoutputs = SigHash.hashOutputs(__scrypt_ts_txPreimage);
     this.__scrypt_ts_ctx_locktime = SigHash.nLocktime(__scrypt_ts_txPreimage);
     this.__scrypt_ts_ctx_value = SigHash.value(__scrypt_ts_txPreimage);
-    this.__scrypt_ts_change = {__scrypt_ts_changeAmount, __scrypt_ts_changeAddress};
     require(checkSig(sig, this.bondholderPub));
     require(this.__scrypt_ts_ctx_locktime >= this.lockUntil);
-    bytes outputs = Utils.buildOutput(Utils.buildPublicKeyHashScript(this.bondholderPkh), this.__scrypt_ts_ctx_value) + this.buildChangeOutput();
+    require(amount > 0 && amount <= this.__scrypt_ts_ctx_value);
+    bytes outputs = Utils.buildOutput(Utils.buildPublicKeyHashScript(this.bondholderPkh), amount);
     require(this.__scrypt_ts_ctx_hashoutputs == hash256(outputs));
   }
-  public function slash(Sig sig, SigHashPreimage __scrypt_ts_txPreimage, int __scrypt_ts_changeAmount, Ripemd160 __scrypt_ts_changeAddress) {
+  public function slash(Sig sig, int amount, SigHashPreimage __scrypt_ts_txPreimage) {
     require(Tx.checkPreimageSigHashType(__scrypt_ts_txPreimage, SigHashType(b'41')));
     this.__scrypt_ts_ctx_hashoutputs = SigHash.hashOutputs(__scrypt_ts_txPreimage);
     this.__scrypt_ts_ctx_locktime = SigHash.nLocktime(__scrypt_ts_txPreimage);
     this.__scrypt_ts_ctx_value = SigHash.value(__scrypt_ts_txPreimage);
-    this.__scrypt_ts_change = {__scrypt_ts_changeAmount, __scrypt_ts_changeAddress};
     require(checkSig(sig, this.slasherPub));
-    bytes outputs = Utils.buildOutput(Utils.buildPublicKeyHashScript(this.slashDestPkh), this.__scrypt_ts_ctx_value) + this.buildChangeOutput();
+    require(amount > 0 && amount <= this.__scrypt_ts_ctx_value);
+    bytes outputs = Utils.buildOutput(Utils.buildPublicKeyHashScript(this.slashDestPkh), amount);
     require(this.__scrypt_ts_ctx_hashoutputs == hash256(outputs));
   }
-  function buildChangeOutput() : bytes {  return this.__scrypt_ts_change.amount > 0 ? Utils.buildOutput(Utils.buildPublicKeyHashScript(this.__scrypt_ts_change.address), this.__scrypt_ts_change.amount) : b'';}
 }

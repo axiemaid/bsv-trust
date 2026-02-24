@@ -2,4 +2,7 @@ node_modules/
 dist/
 wallet.json
 slasher.json
+resolver.json
 bonds/
+escrows/
+assertions/

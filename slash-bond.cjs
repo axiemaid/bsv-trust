@@ -1,19 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * Slash a bond — redirect sats to the slash destination.
- *
- * Usage: node slash-bond.cjs --txid <bond-txid> --slasher-wif <wif>
- *
- * Only the designated slasher can do this. No time lock on slashing.
- */
-
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { Bond } = require('./dist/src/contracts/bond');
-const { bsv, toByteString, PubKeyHash, PubKey, Sig, DefaultProvider, TestWallet } = require('scrypt-ts');
+const { bsv, toByteString, PubKeyHash, PubKey, DefaultProvider, TestWallet } = require('scrypt-ts');
 
 const ARTIFACT_PATH = path.join(__dirname, 'artifacts/bond.json');
 
@@ -79,21 +71,17 @@ function wocBroadcast(txhex) {
 async function slash() {
   const slasherKey = bsv.PrivateKey.fromWIF(SLASHER_WIF);
 
-  // Load artifact
   Bond.loadArtifact(require(ARTIFACT_PATH));
 
-  // Check if UTXO is still unspent
   const spentInfo = await httpGet(`https://api.whatsonchain.com/v1/bsv/main/tx/${TXID}/0/spent`).catch(() => null);
   if (spentInfo && spentInfo.txid) {
     console.error('❌ Bond already spent.');
     process.exit(1);
   }
 
-  // Fetch bond tx
   const txHex = await wocGetRaw(`/tx/${TXID}/hex`);
   const bsvTx = new bsv.Transaction(txHex);
 
-  // Reconstruct bond
   const provider = new DefaultProvider({ network: bsv.Networks.mainnet });
   const signer = new TestWallet(slasherKey, provider);
   await provider.connect();
@@ -104,7 +92,6 @@ async function slash() {
   const bondAmount = Number(bond.balance);
   const slashDestPkh = bond.slashDestPkh;
 
-  // Decode slash destination address for display
   const slashDestAddr = bsv.Address.fromPublicKeyHash(
     Buffer.from(slashDestPkh, 'hex'),
     'mainnet'
@@ -115,16 +102,16 @@ async function slash() {
   console.log(`   Amount:    ${bondAmount} sats`);
   console.log(`   Slash to:  ${slashDestAddr.toString()}`);
 
-  const FEE = 1000;
+  const FEE = 500;
+  const outputAmount = bondAmount - FEE;
 
   bond.bindTxBuilder('slash', (current, options) => {
     const unsignedTx = new bsv.Transaction();
     unsignedTx.addInput(current.buildContractInput());
 
-    // Send to slash destination
     unsignedTx.addOutput(new bsv.Transaction.Output({
       script: bsv.Script.buildPublicKeyHashOut(slashDestAddr),
-      satoshis: bondAmount - FEE,
+      satoshis: outputAmount,
     }));
 
     return Promise.resolve({
@@ -138,8 +125,11 @@ async function slash() {
 
   const callResult = await bond.methods.slash(
     (sigResps) => {
-      return sigResps.find(s => s.pubKey === slasherKey.toPublicKey().toHex()).sig;
+      const match = sigResps.find(s => s.pubKey === slasherKey.toPublicKey().toHex());
+      if (!match && sigResps.length > 0) return sigResps[0].sig;
+      return match.sig;
     },
+    BigInt(outputAmount),
     { autoPayFee: false, partiallySigned: true, estimateFee: false }
   );
 
@@ -153,7 +143,7 @@ async function slash() {
   console.log('═══════════════════════════════════════════════');
   console.log('   ⚡ Bond slashed!');
   console.log(`   TXID:   ${txid}`);
-  console.log(`   ${bondAmount - FEE} sats → ${slashDestAddr.toString()}`);
+  console.log(`   ${outputAmount} sats → ${slashDestAddr.toString()}`);
   console.log(`   https://whatsonchain.com/tx/${txid}`);
   console.log('═══════════════════════════════════════════════');
 }

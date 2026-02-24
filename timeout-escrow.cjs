@@ -4,10 +4,11 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const { Bond } = require('./dist/src/contracts/bond');
+const { Escrow } = require('./dist/src/contracts/escrow');
 const { bsv, toByteString, PubKeyHash, PubKey, DefaultProvider, TestWallet } = require('scrypt-ts');
 
-const ARTIFACT_PATH = path.join(__dirname, 'artifacts/bond.json');
+const ARTIFACT_PATH = path.join(__dirname, 'artifacts/escrow.json');
+const FEE = 500;
 
 const args = {};
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -18,7 +19,7 @@ const TXID = args.txid;
 const WALLET_PATH = args.wallet || path.join(__dirname, 'wallet.json');
 
 if (!TXID) {
-  console.log('Usage: node release-bond.cjs --txid <bond-txid> --wallet <path>');
+  console.log('Usage: node timeout-escrow.cjs --txid <escrow-txid> [--wallet <path>]');
   process.exit(1);
 }
 
@@ -36,11 +37,10 @@ function httpGet(url) {
   });
 }
 
-function wocGetRaw(endpoint) {
+function httpGetRaw(url) {
   return new Promise((resolve, reject) => {
-    https.get(`https://api.whatsonchain.com/v1/bsv/main${endpoint}`, res => {
-      let d = '';
-      res.on('data', c => d += c);
+    https.get(url, res => {
+      let d = ''; res.on('data', c => d += c);
       res.on('end', () => resolve(d.trim()));
     }).on('error', reject);
   });
@@ -58,8 +58,8 @@ function wocBroadcast(txhex) {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
-        if (res.statusCode !== 200) reject(new Error(`Broadcast failed (${res.statusCode}): ${d}`));
-        else resolve(d.replace(/"/g, '').trim());
+        if (res.statusCode >= 400) return reject(new Error(`Broadcast: ${d}`));
+        resolve(d.replace(/"/g, '').trim());
       });
     });
     req.on('error', reject);
@@ -68,81 +68,69 @@ function wocBroadcast(txhex) {
   });
 }
 
-async function release() {
-  if (!fs.existsSync(WALLET_PATH)) {
-    console.error(`Wallet not found: ${WALLET_PATH}`);
-    process.exit(1);
-  }
+async function main() {
+  Escrow.loadArtifact(JSON.parse(fs.readFileSync(ARTIFACT_PATH, 'utf8')));
 
-  const wallet = JSON.parse(fs.readFileSync(WALLET_PATH, 'utf-8'));
-  const bondholderKey = bsv.PrivateKey.fromWIF(wallet.wif);
-  const bondholderAddr = bondholderKey.toAddress();
+  const escrowsDir = path.join(__dirname, 'escrows');
+  const stateFile = fs.readdirSync(escrowsDir).find(f => f.startsWith(TXID.slice(0, 16)));
+  if (!stateFile) { console.error('❌ Escrow state not found'); process.exit(1); }
+  const state = JSON.parse(fs.readFileSync(path.join(escrowsDir, stateFile), 'utf8'));
 
-  Bond.loadArtifact(require(ARTIFACT_PATH));
-
-  const spentInfo = await httpGet(`https://api.whatsonchain.com/v1/bsv/main/tx/${TXID}/0/spent`).catch(() => null);
-  if (spentInfo && spentInfo.txid) {
-    console.error('❌ Bond already spent.');
-    process.exit(1);
-  }
-
-  const txHex = await wocGetRaw(`/tx/${TXID}/hex`);
-  const bsvTx = new bsv.Transaction(txHex);
-
-  const provider = new DefaultProvider({ network: bsv.Networks.mainnet });
-  const signer = new TestWallet(bondholderKey, provider);
-  await provider.connect();
-
-  const bond = Bond.fromTx(bsvTx, 0);
-  await bond.connect(signer);
-
-  const bondAmount = Number(bond.balance);
-  const lockUntil = Number(bond.lockUntil);
+  const wallet = JSON.parse(fs.readFileSync(WALLET_PATH, 'utf8'));
+  const requesterKey = bsv.PrivateKey.fromWIF(wallet.wif);
 
   const chainInfo = await httpGet('https://api.whatsonchain.com/v1/bsv/main/chain/info');
   const currentHeight = chainInfo.blocks;
 
-  console.log('🔓 Releasing Bond');
-  console.log(`   Bond:    ${TXID.slice(0, 16)}...`);
-  console.log(`   Amount:  ${bondAmount} sats`);
-  console.log(`   Lock:    block ${lockUntil} (current: ${currentHeight})`);
+  const outputAmount = state.amount - FEE;
 
-  if (currentHeight < lockUntil) {
-    console.error(`❌ Bond still locked. ${lockUntil - currentHeight} blocks remaining.`);
+  console.log('⏰ Timeout Escrow — reclaiming funds');
+  console.log(`   Escrow:   ${TXID.slice(0, 16)}...`);
+  console.log(`   Amount:   ${state.amount} sats`);
+  console.log(`   Timeout:  block ${state.timeoutBlock} (current: ${currentHeight})`);
+
+  if (currentHeight < state.timeoutBlock) {
+    console.log(`   ❌ Not yet timed out — ${state.timeoutBlock - currentHeight} blocks remaining`);
     process.exit(1);
   }
+  console.log(`   ✅ Timed out (${currentHeight - state.timeoutBlock} blocks past)`);
+  console.log();
 
-  console.log(`   Status:  ✅ Unlocked (${currentHeight - lockUntil} blocks past lock)`);
+  const requesterPkh = toByteString(bsv.Address.fromString(state.requesterAddress).hashBuffer.toString('hex'));
+  const workerPkh = toByteString(bsv.Address.fromString(state.workerAddress).hashBuffer.toString('hex'));
 
-  const FEE = 500;
-  const outputAmount = bondAmount - FEE;
+  const escrow = new Escrow(
+    PubKey(toByteString(state.requesterPub)),
+    PubKeyHash(requesterPkh),
+    PubKey(toByteString(state.workerPub)),
+    PubKeyHash(workerPkh),
+    BigInt(state.timeoutBlock)
+  );
 
-  bond.bindTxBuilder('release', (current, options) => {
+  const rawHex = await httpGetRaw(`https://api.whatsonchain.com/v1/bsv/main/tx/${TXID}/hex`);
+  const prevTx = new bsv.Transaction(rawHex);
+  escrow.from = { tx: prevTx, outputIndex: 0 };
+
+  const provider = new DefaultProvider({ network: bsv.Networks.mainnet });
+  const signer = new TestWallet(requesterKey, provider);
+  await escrow.connect(signer);
+
+  escrow.bindTxBuilder('timeout', (current, options) => {
     const unsignedTx = new bsv.Transaction();
     unsignedTx.addInput(current.buildContractInput());
-
     unsignedTx.addOutput(new bsv.Transaction.Output({
-      script: bsv.Script.buildPublicKeyHashOut(bondholderAddr),
+      script: bsv.Script.buildPublicKeyHashOut(bsv.Address.fromString(state.requesterAddress)),
       satoshis: outputAmount,
     }));
-
     unsignedTx.nLockTime = currentHeight;
     unsignedTx.inputs[0].sequenceNumber = 0xFFFFFFFE;
-
-    return Promise.resolve({
-      tx: unsignedTx,
-      atInputIndex: 0,
-      nexts: [],
-    });
+    return Promise.resolve({ tx: unsignedTx, atInputIndex: 0, nexts: [] });
   });
 
   console.log('   Building transaction...');
-
-  const callResult = await bond.methods.release(
+  const callResult = await escrow.methods.timeout(
     (sigResps) => {
-      console.log('   sigResps:', JSON.stringify(sigResps.map(s => ({pubKey: s.pubKey, hasSig: !!s.sig}))));
-      console.log('   expected pubKey:', bondholderKey.toPublicKey().toHex());
-      const match = sigResps.find(s => s.pubKey === bondholderKey.toPublicKey().toHex());
+      const match = sigResps.find(s => s.pubKey === requesterKey.toPublicKey().toHex());
       if (!match && sigResps.length > 0) return sigResps[0].sig;
       return match.sig;
     },
@@ -158,14 +146,11 @@ async function release() {
 
   console.log();
   console.log('═══════════════════════════════════════════════');
-  console.log('   🔓 Bond released!');
+  console.log('   ⏰ Escrow timed out — funds reclaimed!');
   console.log(`   TXID:   ${txid}`);
-  console.log(`   ${outputAmount} sats → ${bondholderAddr.toString()}`);
+  console.log(`   ${outputAmount} sats → ${state.requesterAddress}`);
   console.log(`   https://whatsonchain.com/tx/${txid}`);
   console.log('═══════════════════════════════════════════════');
 }
 
-release().catch(err => {
-  console.error('❌', err.message);
-  process.exit(1);
-});
+main().catch(err => { console.error('❌', err.message); process.exit(1); });
